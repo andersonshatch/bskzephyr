@@ -1,0 +1,31 @@
+[project]
+name = "bskzephyr"
+version = "0.1.0"
+description = "Asynchronous library to control BSK Zephyr heat recovery devices using BSK Connect APIs."
+readme = "README.md"
+authors = [
+    { name = "Josh Anderson", email = "andersonshatch@gmail.com" }
+]
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    "aiohttp",
+    "pydantic>=2.10.6",
+]
+
+[project.urls]
+Repository = "https://github.com/andersonshatch/bskzephyr"
+Issues = "https://github.com/andersonshatch/bskzephyr/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "black>=25.1.0",
+    "pre-commit>=4.1.0",
+]
+
+[isort]
+profile = "black"
