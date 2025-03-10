@@ -1,8 +1,7 @@
-import json
 from enum import Enum
 from http import HTTPStatus
 
-from aiohttp import ClientResponseError
+from aiohttp import ClientResponseError, ContentTypeError
 from aiohttp.client import ClientResponse, ClientSession
 from pydantic import BaseModel
 
@@ -22,34 +21,39 @@ class FanSpeed(int, Enum):
     high = 80
 
 
-class ZephyrSettings(BaseModel):
-    deviceID: str | None = None
-    groupID: str | None = None
-    deviceStatus: str | None = None
-    fanSpeed: FanSpeed
-    fanMode: FanMode
-    boostTime: int
-    humidityBoost: int
-    cycleTime: int
-    cycleDirection: str
-    _id: str
-    deviceModel: str | None = None
-
-
 class Zephyr(BaseModel):
     _id: str
+    boostTime: int
+    buzzerEnable: int
+    cycleDirection: str
+    cycleTime: int
     deviceID: str
     deviceModel: str
+    deviceStatus: str
+    fanSpeed: FanSpeed
+    fanMode: FanMode
     filterTimer: int
     groupID: str
+    humidity: float
+    humidityBoost: int
+    humidityBoostState: bool
+    hygieneStatus: int
+    temperature: float
+    type: str
+    updatedAt: str
+    version: str
+
+
+class DeviceUser(BaseModel):
+    _id: str
+    DeviceUserType: str
+    createdAt: str
+    device: Zephyr
+    deviceModel: str
     groupTitle: str
     title: str
-    humidity: float
-    temperature: float
-    hygieneStatus: str
-    deviceStatus: str
-    version: str
-    settings: ZephyrSettings
+    updatedAt: str
+    user: str
 
 
 class BSKZephyrClient:
@@ -66,55 +70,80 @@ class BSKZephyrClient:
         self._aiohttp_session: ClientSession = session
 
     async def login(self) -> str:
-        try:
-            resp: ClientResponse = await self._aiohttp_session.request(
-                "post",
-                "https://api.bskhvac.com.tr/auth/sign-in",
-                json={
-                    "email": self._username,
-                    "password": self._password,
-                },
-                raise_for_status=True,
-            )
-
-            token = (await resp.json())["accessToken"]
-            self._token = token
-            return token
-        except ClientResponseError as err:
-            if err.status == HTTPStatus.FORBIDDEN:
-                raise InvalidAuthError(err)
+        async with self._aiohttp_session.request(
+            "post",
+            "https://connect.bskhvac.com.tr/auth/sign-in",
+            json={
+                "email": self._username,
+                "password": self._password,
+            },
+            raise_for_status=False,
+        ) as resp:
+            if resp.status == HTTPStatus.OK:
+                token = (await resp.json())["accessToken"]
+                self._token = token
+                return token
+            elif resp.status in (
+                HTTPStatus.FORBIDDEN,
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+            ):
+                try:
+                    body = await resp.json()
+                except ContentTypeError:
+                    raise ZephyrException(resp.status)
+                message = body.get("message")
+                raise InvalidAuthError(message)
             else:
-                raise ZephyrException(err)
+                raise ZephyrException(resp.status)
 
-    async def main_device_list(self) -> list[Zephyr]:
+    async def list_devices(self) -> list[DeviceUser]:
         try:
             resp: ClientResponse = await self._aiohttp_session.request(
                 "get",
-                "https://api.bskhvac.com.tr/device-user/zephyr/master-device-list",
+                "https://connect.bskhvac.com.tr/device-user",
                 headers={"Authorization": self._token},
                 raise_for_status=True,
             )
+
+            resp = await resp.json()
+            models = []
+            for device in resp:
+                models.append(DeviceUser(**device))
+
+            return models
         except ClientResponseError as err:
             if err.status == HTTPStatus.UNAUTHORIZED:
                 raise InvalidAuthError(err)
             else:
                 raise ZephyrException(err)
 
-        resp = await resp.json()
-        models = []
-        for device in resp:
-            models.append(Zephyr(**device))
+    async def control_device(
+        self,
+        groupID: str,
+        deviceStatus: str | None = None,
+        fanMode: FanMode | None = None,
+        fanSpeed: FanSpeed | None = None,
+    ) -> Zephyr | None:
+        body = {}
+        if deviceStatus:
+            body["deviceStatus"] = deviceStatus
+        if fanMode:
+            body["fanMode"] = fanMode
+        if fanSpeed:
+            body["fanSpeed"] = fanSpeed
 
-        return models
+        if not body:
+            return None
 
-    async def update_group_settings(self, body) -> dict:
-        print(json.dumps(body))
-        resp: ClientResponse = await self._aiohttp_session.request(
-            "post",
-            "https://api.bskhvac.com.tr/device-user/zephyr/update-group-settings",
-            headers={"Authorization": self._token},
-            json=body,
-            raise_for_status=True,
-        )
+        try:
+            resp: ClientResponse = await self._aiohttp_session.request(
+                "put",
+                f"https://connect.bskhvac.com.tr/device?groupID={groupID}",
+                headers={"Authorization": self._token},
+                json=body,
+                raise_for_status=True,
+            )
 
-        return await resp.json()
+            return Zephyr(**(await resp.json())[0])
+        except ClientResponseError as err:
+            raise ZephyrException from err
