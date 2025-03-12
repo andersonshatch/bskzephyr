@@ -123,6 +123,7 @@ class BSKZephyrClient:
         deviceStatus: str | None = None,
         fanMode: FanMode | None = None,
         fanSpeed: FanSpeed | None = None,
+        humidityBoost: int | None = None,
     ) -> Zephyr | None:
         body = {}
         if deviceStatus:
@@ -131,6 +132,8 @@ class BSKZephyrClient:
             body["fanMode"] = fanMode
         if fanSpeed:
             body["fanSpeed"] = fanSpeed
+        if humidityBoost is not None:  # allow 0
+            body["humidityBoost"] = humidityBoost
 
         if not body:
             return None
