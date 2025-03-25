@@ -147,6 +147,6 @@ class BSKZephyrClient:
                 raise_for_status=True,
             )
 
-            return Zephyr(**(await resp.json())[0])
+            return Zephyr(**(await resp.json()))
         except ClientResponseError as err:
             raise ZephyrException from err
