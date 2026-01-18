@@ -14,11 +14,42 @@ class FanMode(str, Enum):
     supply = "supply"
 
 
-class FanSpeed(int, Enum):
-    night = 22
-    low = 30
-    medium = 55
-    high = 80
+class FanSpeed(str, Enum):
+    night = "night"
+    low = "low"
+    medium = "medium"
+    high = "high"
+
+
+_FAN_SPEED_VALUES = {
+    "BSK-Zephyr-V2.0": {
+        FanSpeed.night: 22,
+        FanSpeed.low: 30,
+        FanSpeed.medium: 55,
+        FanSpeed.high: 80,
+    },
+    "BSK-Zephyr-Mini-V1.0": {
+        FanSpeed.night: 35,
+        FanSpeed.low: 50,
+        FanSpeed.medium: 60,
+        FanSpeed.high: 80,
+    },
+}
+
+_FAN_SPEED_VALUES_REVERSE = {
+    model: {v: k for k, v in speeds.items()}
+    for model, speeds in _FAN_SPEED_VALUES.items()
+}
+
+
+def _get_fan_speed_value(speed: FanSpeed, model: str | None) -> int:
+    if model is None:
+        model = "BSK-Zephyr-V2.0"
+    return _FAN_SPEED_VALUES[model][speed]
+
+
+def _parse_fan_speed(value: int, model: str = "BSK-Zephyr-V2.0") -> FanSpeed | None:
+    return _FAN_SPEED_VALUES_REVERSE[model][value]
 
 
 class Zephyr(BaseModel):
@@ -68,6 +99,7 @@ class BSKZephyrClient:
         self._password = password
         self._token = token
         self._aiohttp_session: ClientSession = session
+        self._device_models: dict[str, str] = {}  # Cache groupID -> deviceModel
 
     async def login(self) -> str:
         async with self._aiohttp_session.request(
@@ -96,20 +128,6 @@ class BSKZephyrClient:
             else:
                 raise ZephyrException(resp.status)
 
-    def massage_fan_speed(self, speed: int) -> int:
-        try:
-            FanSpeed(speed)
-            return speed
-        except ValueError:
-            if speed >= FanSpeed.high:
-                return FanSpeed.high.value
-            elif speed >= FanSpeed.medium:
-                return FanSpeed.medium.value
-            elif speed >= FanSpeed.low:
-                return FanSpeed.low.value
-            else:
-                return FanSpeed.night.value
-
     async def list_devices(self) -> list[DeviceUser]:
         try:
             resp: ClientResponse = await self._aiohttp_session.request(
@@ -122,9 +140,13 @@ class BSKZephyrClient:
             resp = await resp.json()
             models = []
             for device in resp:
-                device["device"]["fanSpeed"] = self.massage_fan_speed(
-                    device["device"]["fanSpeed"]
+                model = device["device"]["deviceModel"]
+                device["device"]["fanSpeed"] = _parse_fan_speed(
+                    device["device"]["fanSpeed"], model
                 )
+
+                self._device_models[device["device"]["groupID"]] = model
+
                 models.append(DeviceUser(**device))
 
             return models
@@ -148,7 +170,9 @@ class BSKZephyrClient:
         if fanMode:
             body["fanMode"] = fanMode
         if fanSpeed:
-            body["fanSpeed"] = fanSpeed
+            body["fanSpeed"] = _get_fan_speed_value(
+                fanSpeed, self._device_models.get(groupID)
+            )
         if humidityBoost is not None:  # allow 0
             body["humidityBoost"] = humidityBoost
 
@@ -164,6 +188,12 @@ class BSKZephyrClient:
                 raise_for_status=True,
             )
 
-            return Zephyr(**(await resp.json()))
+            device_data = await resp.json()
+            speed_value = device_data["fanSpeed"]
+            device_data["fanSpeed"] = _FAN_SPEED_VALUES_REVERSE[
+                device_data["deviceModel"]
+            ][speed_value]
+
+            return Zephyr(**device_data)
         except ClientResponseError as err:
             raise ZephyrException from err
